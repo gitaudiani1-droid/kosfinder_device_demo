@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/draft_repository.dart';
 import '../services/device_location_service.dart';
+import '../services/photo_upload_service.dart';
 
 
 class DeviceDemoPage extends StatefulWidget {
@@ -31,6 +32,12 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
   LocationFailureType? _locationError;
 
   bool _isLoading = false;
+
+  final PhotoUploadService _photoUploadService =
+  PhotoUploadService();
+
+  bool _isUploading = false;
+  String? _uploadedPhotoUrl;
 
   @override
   void initState() {
@@ -81,6 +88,52 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+  Future<void> _uploadPhoto() async {
+    if (_photoPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Pilih foto terlebih dahulu.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isUploading = true;
+    });
+
+    try {
+      final result = await _photoUploadService.upload(
+        File(_photoPath!),
+      );
+
+      setState(() {
+        _uploadedPhotoUrl = result.publicUrl;
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Foto berhasil diunggah ke Supabase!'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Upload gagal: $e'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
+      }
+    }
   }
 
   // Memilih foto dari kamera atau galeri.
@@ -400,6 +453,42 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
               icon: const Icon(Icons.save),
               label: const Text('Simpan Draft Lokal'),
             ),
+
+
+            if (CloudConfig.enabled) ...[
+              const SizedBox(height: 12),
+
+              ElevatedButton.icon(
+                onPressed: (_isUploading || _photoPath == null)
+                    ? null
+                    : _uploadPhoto,
+                icon: _isUploading
+                    ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                  ),
+                )
+                    : const Icon(Icons.cloud_upload),
+                label: Text(
+                  _isUploading
+                      ? 'Sedang Mengunggah...'
+                      : 'Upload Foto ke Supabase',
+                ),
+              ),
+
+              if (_uploadedPhotoUrl != null) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'URL Foto Supabase:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                SelectableText(_uploadedPhotoUrl!),
+              ],
+            ],
+
 
             if (_isLoading) ...[
               const SizedBox(height: 16),
