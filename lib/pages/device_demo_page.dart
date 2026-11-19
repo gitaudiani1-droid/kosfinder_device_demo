@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/draft_repository.dart';
 import '../services/device_location_service.dart';
+import 'sensor_demo_page.dart';
 
 class DeviceDemoPage extends StatefulWidget {
   const DeviceDemoPage({super.key});
@@ -167,7 +168,20 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('KosFinder Device Demo'),
-        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.sensors),
+            tooltip: 'Accelerometer',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SensorDemoPage(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
