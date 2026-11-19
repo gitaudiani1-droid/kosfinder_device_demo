@@ -1,10 +1,13 @@
 import 'dart:io';
+import 'dart:async';
+import '../cloud_config.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/draft_repository.dart';
 import '../services/device_location_service.dart';
-import 'sensor_demo_page.dart';
+
 
 class DeviceDemoPage extends StatefulWidget {
   const DeviceDemoPage({super.key});
@@ -25,6 +28,7 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
   String? _photoPath;
   double? _latitude;
   double? _longitude;
+  LocationFailureType? _locationError;
 
   bool _isLoading = false;
 
@@ -32,6 +36,7 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
   void initState() {
     super.initState();
     _restoreLocalDraft();
+
   }
 
   @override
@@ -66,6 +71,7 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
     } catch (e) {
       _showMessage('Gagal memulihkan draft: $e');
     }
+    await _recoverInterruptedPicker();
   }
 
   // Menampilkan pesan kepada pengguna.
@@ -118,10 +124,44 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
     }
   }
 
+  Future<void> _recoverInterruptedPicker() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+
+    try {
+      final lostData = await _picker.retrieveLostData();
+
+      if (lostData.isEmpty) return;
+
+      if (lostData.files != null && lostData.files!.isNotEmpty) {
+        final pickedFile = lostData.files!.first;
+
+        final permanentPath =
+        await _draftRepository.savePermanentPhoto(pickedFile);
+
+        if (!mounted) return;
+
+        setState(() {
+          _photoPath = permanentPath;
+        });
+
+        await _saveDraft();
+
+        _showMessage('Foto yang sebelumnya terputus berhasil dipulihkan.');
+      } else if (lostData.exception != null) {
+        _showMessage('Pemulihan foto gagal: ${lostData.exception}');
+      }
+    } catch (e) {
+      _showMessage('Terjadi kesalahan saat memulihkan foto: $e');
+    }
+  }
+
   // Mengambil koordinat GPS.
   Future<void> _getLocation() async {
+    if (_isLoading) return;
+
     setState(() {
       _isLoading = true;
+      _locationError = null;
     });
 
     try {
@@ -139,7 +179,17 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
 
       _showMessage('Koordinat lokasi berhasil diperoleh.');
     } on LocationFailure catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _locationError = e.type;
+      });
+
       _showMessage(e.message);
+    } on TimeoutException {
+      _showMessage(
+        'Waktu mencari GPS habis. Coba di area terbuka.',
+      );
     } catch (e) {
       _showMessage('Gagal mengambil lokasi: $e');
     } finally {
@@ -169,17 +219,19 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
       appBar: AppBar(
         title: const Text('KosFinder Device Demo'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.sensors),
-            tooltip: 'Accelerometer',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const SensorDemoPage(),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Center(
+              child: Text(
+                CloudConfig.enabled
+                    ? 'Mode: Online'
+                    : 'Mode: Lokal/Offline',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
                 ),
-              );
-            },
+              ),
+            ),
           ),
         ],
       ),
@@ -293,7 +345,25 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
             ),
 
             const SizedBox(height: 12),
+            if (_locationError ==
+                LocationFailureType.serviceDisabled)
+              TextButton.icon(
+                onPressed: () async {
+                  await Geolocator.openLocationSettings();
+                },
+                icon: const Icon(Icons.settings),
+                label: const Text('Buka Pengaturan Lokasi'),
+              ),
 
+            if (_locationError ==
+                LocationFailureType.deniedForever)
+              TextButton.icon(
+                onPressed: () async {
+                  await Geolocator.openAppSettings();
+                },
+                icon: const Icon(Icons.settings),
+                label: const Text('Buka Pengaturan Izin Aplikasi'),
+              ),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
