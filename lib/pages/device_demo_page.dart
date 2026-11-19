@@ -8,7 +8,8 @@ import 'package:geolocator/geolocator.dart';
 import '../services/draft_repository.dart';
 import '../services/device_location_service.dart';
 import '../services/photo_upload_service.dart';
-
+import 'package:connectivity_plus/connectivity_plus.dart';
+import '../services/upload_queue_repository.dart';
 
 class DeviceDemoPage extends StatefulWidget {
   const DeviceDemoPage({super.key});
@@ -39,17 +40,99 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
   bool _isUploading = false;
   String? _uploadedPhotoUrl;
 
+  final UploadQueueRepository _uploadQueueRepository =
+  UploadQueueRepository();
+
+  final Connectivity _connectivity = Connectivity();
+
+  StreamSubscription<List<ConnectivityResult>>?
+  _connectivitySubscription;
+
+  bool _isOnline = true;
+
   @override
   void initState() {
     super.initState();
     _restoreLocalDraft();
-
+    _startConnectivityListener();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _connectivitySubscription?.cancel();
     super.dispose();
+  }
+
+
+  Future<void> _processUploadQueue() async {
+    if (!_isOnline || !CloudConfig.enabled || _isUploading) {
+      return;
+    }
+
+    final pendingPhotos =
+    await _uploadQueueRepository.getPendingUploads();
+
+    for (final photoPath in pendingPhotos) {
+      if (!mounted || !_isOnline) return;
+
+      final photo = File(photoPath);
+
+      if (!await photo.exists()) {
+        await _uploadQueueRepository.removeFromQueue(photoPath);
+        continue;
+      }
+
+      setState(() {
+        _isUploading = true;
+      });
+
+      try {
+        await _photoUploadService.upload(photo);
+
+        await _uploadQueueRepository.removeFromQueue(photoPath);
+
+        _showMessage('Foto antrean berhasil diunggah!');
+      } catch (e) {
+        _showMessage('Upload antrean gagal: $e');
+        break;
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isUploading = false;
+          });
+        }
+      }
+    }
+  }
+
+
+  Future<void> _startConnectivityListener() async {
+    final initialStatus = await _connectivity.checkConnectivity();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isOnline =
+      !initialStatus.contains(ConnectivityResult.none);
+    });
+
+    _connectivitySubscription =
+        _connectivity.onConnectivityChanged.listen((results) {
+          if (!mounted) return;
+
+          final connected =
+          !results.contains(ConnectivityResult.none);
+
+          setState(() {
+            _isOnline = connected;
+          });
+
+          if (connected) {
+            _showMessage('Koneksi terdeteksi. Memeriksa antrean upload...');
+            _processUploadQueue();
+          }
+        });
   }
 
   // Memulihkan draft ketika halaman dibuka.
@@ -90,11 +173,10 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
     );
   }
   Future<void> _uploadPhoto() async {
-    if (_photoPath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Pilih foto terlebih dahulu.'),
-        ),
+    if (!_isOnline) {
+      await _uploadQueueRepository.addToQueue(_photoPath!);
+      _showMessage(
+        'Tidak ada koneksi internet. Foto masuk antrean upload.',
       );
       return;
     }
@@ -452,7 +534,39 @@ class _DeviceDemoPageState extends State<DeviceDemoPage> {
               },
               icon: const Icon(Icons.save),
               label: const Text('Simpan Draft Lokal'),
+
             ),
+
+            const SizedBox(height: 12),
+
+            ElevatedButton.icon(
+              onPressed: (_isUploading || _photoPath == null)
+                  ? null
+                  : _uploadPhoto,
+              icon: _isUploading
+                  ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                ),
+              )
+                  : const Icon(Icons.cloud_upload),
+              label: Text(
+                _isUploading
+                    ? 'Sedang Mengunggah...'
+                    : 'Upload Foto ke Supabase',
+              ),
+            ),
+
+            if (_uploadedPhotoUrl != null) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'URL Foto Supabase:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              SelectableText(_uploadedPhotoUrl!),
+            ],
 
 
             if (CloudConfig.enabled) ...[
